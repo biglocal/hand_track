@@ -4,17 +4,21 @@
 
 #include <Kinect.h>
 #include "hand_tracking.h"
+//
 // Kinect for Windows SDK Header
 
 using namespace System;
 using namespace System::Windows::Forms;
+using namespace System::Threading;
 
 [STAThread]//leave this as is
 void main(array<String^>^ args) {
+	App app;
+	//App::managed^ managed_c = gcnew App::managed;
 	Application::EnableVisualStyles();
 	Application::SetCompatibleTextRenderingDefault(false);
-	kinect_multisource::hand_Form form;
-	Application::Run(%form);
+	//kinect_multisource::hand_Form form;
+	Application::Run(%app.managed_c->form);
 }
 
 long App::Init(System::Windows::Forms::ListBox^  lb_log)
@@ -40,6 +44,7 @@ long App::Init(System::Windows::Forms::ListBox^  lb_log)
 	}
 	IFrameDescription *frameDesc;
 	depthFrameSource->get_FrameDescription(&frameDesc);
+	depthFrameSource->get_DepthMaxReliableDistance(&uDepthMax);
 	frameDesc->get_Width(&iDepthWidth);
 	frameDesc->get_Height(&iDepthHeight);
 	snprintf(str_log, sizeof(str_log), "Width:%d, Height:%d", iDepthWidth, iDepthHeight);
@@ -107,6 +112,8 @@ long App::Init(System::Windows::Forms::ListBox^  lb_log)
 		return -1;
 	}
 	lb_log->Items->Add("============== Init OK ==============");
+
+	
 	return 0;
 }
 
@@ -119,13 +126,71 @@ void App::Shutdown(System::Windows::Forms::ListBox^  lb_log)
 	lb_log->Items->Add("Release kinect resource");
 }
 
+
+void App::Tick(System::Windows::Forms::ListBox^  lb_log)
+{
+	HRESULT hr;
+	IDepthFrame* depthFrame;
+	hr = m_depthFrameReader->AcquireLatestFrame(&depthFrame);
+	if (FAILED(hr))
+	{
+		lb_log->Items->Add("Acquire Depth Frame Failed");
+		return;
+	}
+	hr = depthFrame->CopyFrameDataToArray(iDepthWidth * iDepthHeight, m_depthBuffer);
+	SafeRelease(depthFrame);
+}
+
+void App::Draw(System::Windows::Forms::ListBox^  lb_log, System::Windows::Forms::PictureBox^  pic_result)
+{
+
+	lb_log->Items->Add("Draw Pic");
+	mDepthImg = cv::Mat(iDepthHeight, iDepthWidth, CV_16U, uDepthPointNum);
+	mDepthImg.convertTo(mImg8bit, CV_8U, 255.0f / uDepthMax);
+
+	// only color images are supported
+	assert(mImg8bit.type() == CV_8UC1);
+
+	if ((pic_result->Image == nullptr) || (pic_result->Width != mImg8bit.cols) || (pic_result->Height != mImg8bit.rows))
+	{
+		pic_result->Width = mImg8bit.cols;
+		pic_result->Height = mImg8bit.rows;
+		pic_result->Image = gcnew System::Drawing::Bitmap(mImg8bit.cols, mImg8bit.rows);
+	}
+
+	// Create System::Drawing::Bitmap from cv::Mat
+	System::Drawing::Bitmap^ bmpImage = gcnew System::Drawing::Bitmap(
+		mImg8bit.cols, mImg8bit.rows, mImg8bit.step,
+		System::Drawing::Imaging::PixelFormat::Format8bppIndexed,
+		System::IntPtr(mImg8bit.data)
+	);
+
+	// Draw Bitmap over a PictureBox
+	System::Drawing::Graphics^ g = System::Drawing::Graphics::FromImage(pic_result->Image);
+
+	g->DrawImage(bmpImage, 0, 0, mImg8bit.cols, mImg8bit.rows);
+	pic_result->Refresh();
+}
+
+void App::managed::wait_frame()
+{
+
+}
+
+void App::managed::create_thread()
+{
+	Thread^ threads = gcnew Thread(gcnew ParameterizedThreadStart(this, &App::managed::wait_frame));
+	threads->Start();
+}
+
 void kinect_multisource::hand_Form::hand_Form_Load(System::Object^  sender, System::EventArgs^  e)
 {
-	App app;
-	if (FAILED(app.Init(lb_log)))
+	if (FAILED(App::Init(lb_log)))
 	{
 		lb_log->Items->Add("Kinect initial failed");
 		return;
 	}
-	app.Shutdown(lb_log);
+	
+
+	App::Shutdown(lb_log);
 }
